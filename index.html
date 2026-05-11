@@ -35,9 +35,9 @@
             attribution: '&copy; OpenStreetMap'
         }).addTo(map);
 
-        // ✅ 의성군 경계 GeoJSON (Overpass API로 OSM에서 직접 가져오기)
+        // ✅ 의성군 경계 GeoJSON (relation ID 7817014 직접 지정 - admin_level=6)
         const overpassUrl = "https://overpass-api.de/api/interpreter?data=" +
-            encodeURIComponent(`[out:json];relation["name"="의성군"]["admin_level"="5"];out geom;`);
+            encodeURIComponent(`[out:json];relation(7817014);out geom;`);
 
         fetch(overpassUrl)
             .then(r => r.json())
