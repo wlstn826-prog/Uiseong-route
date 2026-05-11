@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <title>나의 운행 마을 대시보드</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-geometryutil@0.10.0/src/leaflet-geometryutil.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Malgun Gothic', sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        .legend { 
+            background: white; 
+            padding: 12px 15px; 
+            border-radius: 8px; 
+            box-shadow: 0 0 15px rgba(0,0,0,0.3); 
+            font-size: 13.5px; 
+            line-height: 1.8;
+            max-height: 85vh;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <script>
+        const map = L.map('map').setView([36.352, 128.697], 11);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(map);
+
+        // ✅ 수정 1: MarkerClusterGroup 제거 → 일반 LayerGroup 사용 (항상 점으로 표시)
+        const markerLayer = L.layerGroup().addTo(map);
+
+        const routePoints = {};
+        const usedColors = {};
+
+        const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRzX4GKydgPVl6r3Zyw9no09LXOJjQ2ug7wVEl3A0KWDmk-3sXbjJXL4XbUm3RyT9CG4hWC-yhxH_Sm/pub?gid=864364768&single=true&output=csv";
+
+        const colorPalette = [
+            "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
+            "#e377c2","#8c564b","#17becf","#bcbd22","#7f7f7f",
+            "#aec7e8","#ffbb78","#98df8a","#ff9896","#c5b0d5"
+        ];
+
+        Papa.parse(csvUrl, {
+            download: true,
+            header: true,
+            skipEmptyLines: true,
+            complete: function(results) {
+                console.log("✅ CSV 로드 완료:", results.data.length, "행");
+
+                results.data.forEach(row => {
+                    const lat = parseFloat(row.위도);
+                    const lng = parseFloat(row.경도);
+                    if (isNaN(lat) || isNaN(lng)) return;
+
+                    const route = (row.노선 || '기타').trim();
+                    const order = parseFloat(row.순서) || 9999;
+
+                    if (!usedColors[route]) {
+                        usedColors[route] = colorPalette[Object.keys(usedColors).length % colorPalette.length];
+                    }
+                    const color = usedColors[route];
+
+                    // ✅ 항상 circleMarker로 표시 (클러스터 없음)
+                    const marker = L.circleMarker([lat, lng], {
+                        radius: 8,
+                        fillColor: color,
+                        color: "#ffffff",
+                        weight: 2.5,
+                        fillOpacity: 0.95
+                    }).bindPopup(`
+                        <b>${row.마을이름 || ''}</b><br>
+                        <b>${route}</b> · ${row.면 || ''}<br>
+                        순서: ${row.순서 || '미지정'}
+                    `);
+
+                    markerLayer.addLayer(marker);
+
+                    if (!routePoints[route]) routePoints[route] = [];
+                    routePoints[route].push({ lat, lng, order });
+                });
+
+                // ✅ 수정 2: 화살표를 SVG로 직접 그리기 (leaflet-arrowheads 의존성 제거)
+                Object.keys(routePoints).forEach(route => {
+                    let points = routePoints[route];
+                    if (points.length < 2) return;
+
+                    // 순서 기준 정렬
+                    points.sort((a, b) => a.order - b.order);
+
+                    const color = usedColors[route];
+                    const latlngs = points.map(p => [p.lat, p.lng]);
+
+                    // 노선 폴리라인
+                    L.polyline(latlngs, {
+                        color: color,
+                        weight: 5,
+                        opacity: 0.85
+                    }).addTo(map);
+
+                    // ✅ 각 구간마다 화살표 마커 추가
+                    for (let i = 0; i < latlngs.length - 1; i++) {
+                        const from = map.latLngToContainerPoint(latlngs[i]);
+                        const to   = map.latLngToContainerPoint(latlngs[i + 1]);
+
+                        // 중간 지점에 화살표 배치
+                        const midLat = (latlngs[i][0] + latlngs[i + 1][0]) / 2;
+                        const midLng = (latlngs[i][1] + latlngs[i + 1][1]) / 2;
+
+                        // 각도 계산
+                        const angle = Math.atan2(to.y - from.y, to.x - from.x) * 180 / Math.PI + 90;
+
+                        // SVG 화살표 아이콘
+                        const arrowIcon = L.divIcon({
+                            className: '',
+                            html: `<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"
+                                        style="transform: rotate(${angle}deg); display:block;">
+                                    <polygon points="10,2 18,18 10,13 2,18"
+                                             fill="${color}" stroke="white" stroke-width="1.5" opacity="0.95"/>
+                                   </svg>`,
+                            iconSize: [20, 20],
+                            iconAnchor: [10, 10]
+                        });
+
+                        L.marker([midLat, midLng], { icon: arrowIcon, interactive: false }).addTo(map);
+                    }
+
+                    console.log(`✅ ${route} (${points.length}개 정류장) 화살표 생성 완료`);
+                });
+
+                updateLegend(usedColors);
+            }
+        });
+
+        function updateLegend(usedColors) {
+            const div = document.getElementById('legend-content');
+            const count = Object.values(routePoints).reduce((s, p) => s + p.length, 0);
+            document.getElementById('legend-count').textContent = `${count}개 마을`;
+
+            let html = '';
+            Object.keys(usedColors).sort().forEach(route => {
+                html += `<span style="color:${usedColors[route]}; font-size:18px;">●</span> ${route}<br>`;
+            });
+            div.innerHTML = html;
+        }
+
+        const legend = L.control({ position: 'bottomright' });
+        legend.onAdd = function() {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = `
+                <b>🚛 운행 마을 <span id="legend-count">로드 중...</span></b><br><br>
+                <div id="legend-content">로드 중...</div>
+                <hr style="margin:8px 0; border-color:#eee;">
+                <small>→ 화살표 = 순서 기준 방향</small>
+            `;
+            return div;
+        };
+        legend.addTo(map);
+    </script>
+</body>
+</html>
