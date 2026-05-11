@@ -35,7 +35,37 @@
             attribution: '&copy; OpenStreetMap'
         }).addTo(map);
 
-        // ✅ 의성군 경계 GeoJSON (relation ID 7817014 직접 지정 - admin_level=6)
+        // ✅ way 조각들을 끝점끼리 연결해 하나의 폐곡선으로 만드는 함수
+        function stitchSegments(segs) {
+            const remaining = segs.map(s => [...s]);
+            const result = remaining.splice(0, 1)[0];
+
+            while (remaining.length > 0) {
+                const last = result[result.length - 1];
+                let bestIdx = -1, bestReverse = false, bestDist = Infinity;
+
+                for (let i = 0; i < remaining.length; i++) {
+                    const seg = remaining[i];
+                    const dHead = Math.hypot(seg[0][0] - last[0], seg[0][1] - last[1]);
+                    const dTail = Math.hypot(seg[seg.length - 1][0] - last[0], seg[seg.length - 1][1] - last[1]);
+                    if (dHead < bestDist) { bestDist = dHead; bestIdx = i; bestReverse = false; }
+                    if (dTail < bestDist) { bestDist = dTail; bestIdx = i; bestReverse = true;  }
+                }
+
+                const chosen = remaining.splice(bestIdx, 1)[0];
+                const toAdd = bestReverse ? chosen.reverse() : chosen;
+                result.push(...toAdd.slice(1)); // 첫 점은 이전 마지막과 겹치므로 제외
+            }
+
+            // 폐곡선 닫기
+            const first = result[0], lastPt = result[result.length - 1];
+            if (first[0] !== lastPt[0] || first[1] !== lastPt[1]) {
+                result.push(first);
+            }
+            return result;
+        }
+
+        // ✅ 의성군 경계 (relation ID 7817014)
         const overpassUrl = "https://overpass-api.de/api/interpreter?data=" +
             encodeURIComponent(`[out:json];relation(7817014);out geom;`);
 
@@ -47,41 +77,36 @@
                     return;
                 }
 
-                // OSM relation → GeoJSON Polygon 변환
                 const el = data.elements[0];
                 const outerMembers = el.members.filter(m => m.role === "outer");
 
-                // 각 outer way의 좌표를 수집
-                const rings = outerMembers.map(m =>
+                const segments = outerMembers.map(m =>
                     m.geometry.map(pt => [pt.lon, pt.lat])
                 );
 
-                // 가장 긴 링을 외곽선으로 사용
-                rings.sort((a, b) => b.length - a.length);
+                // 끝점 체이닝으로 직선 제거 후 폐곡선 완성
+                const stitched = stitchSegments(segments);
 
                 const geojson = {
                     type: "Feature",
-                    geometry: {
-                        type: "Polygon",
-                        coordinates: rings
-                    }
+                    geometry: { type: "Polygon", coordinates: [stitched] }
                 };
 
                 L.geoJSON(geojson, {
                     style: {
-                        color: "#2563eb",       // 파란 테두리
+                        color: "#2563eb",
                         weight: 2.5,
                         opacity: 0.9,
-                        fillColor: "#3b82f6",   // 파란 채우기
+                        fillColor: "#3b82f6",
                         fillOpacity: 0.08
                     }
                 }).addTo(map);
 
-                console.log("✅ 의성군 경계 표시 완료");
+                console.log("✅ 의성군 경계 완료 (조각 수:", segments.length, ")");
             })
             .catch(err => console.error("❌ 경계 로드 실패:", err));
 
-        // ✅ 수정 1: MarkerClusterGroup 제거 → 일반 LayerGroup 사용 (항상 점으로 표시)
+        // 항상 점으로 표시 (클러스터 없음)
         const markerLayer = L.layerGroup().addTo(map);
 
         const routePoints = {};
@@ -115,7 +140,6 @@
                     }
                     const color = usedColors[route];
 
-                    // ✅ 항상 circleMarker로 표시 (클러스터 없음)
                     const marker = L.circleMarker([lat, lng], {
                         radius: 8,
                         fillColor: color,
@@ -134,37 +158,30 @@
                     routePoints[route].push({ lat, lng, order });
                 });
 
-                // ✅ 수정 2: 화살표를 SVG로 직접 그리기 (leaflet-arrowheads 의존성 제거)
                 Object.keys(routePoints).forEach(route => {
                     let points = routePoints[route];
                     if (points.length < 2) return;
 
-                    // 순서 기준 정렬
                     points.sort((a, b) => a.order - b.order);
 
                     const color = usedColors[route];
                     const latlngs = points.map(p => [p.lat, p.lng]);
 
-                    // 노선 폴리라인
                     L.polyline(latlngs, {
                         color: color,
                         weight: 5,
                         opacity: 0.85
                     }).addTo(map);
 
-                    // ✅ 각 구간마다 화살표 마커 추가
                     for (let i = 0; i < latlngs.length - 1; i++) {
                         const from = map.latLngToContainerPoint(latlngs[i]);
                         const to   = map.latLngToContainerPoint(latlngs[i + 1]);
 
-                        // 중간 지점에 화살표 배치
                         const midLat = (latlngs[i][0] + latlngs[i + 1][0]) / 2;
                         const midLng = (latlngs[i][1] + latlngs[i + 1][1]) / 2;
 
-                        // 각도 계산
                         const angle = Math.atan2(to.y - from.y, to.x - from.x) * 180 / Math.PI + 90;
 
-                        // SVG 화살표 아이콘
                         const arrowIcon = L.divIcon({
                             className: '',
                             html: `<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"
@@ -179,7 +196,7 @@
                         L.marker([midLat, midLng], { icon: arrowIcon, interactive: false }).addTo(map);
                     }
 
-                    console.log(`✅ ${route} (${points.length}개 정류장) 화살표 생성 완료`);
+                    console.log(`✅ ${route} (${points.length}개 정류장) 완료`);
                 });
 
                 updateLegend(usedColors);
