@@ -149,7 +149,8 @@
                     }).bindPopup(`
                         <b>${row.마을이름 || ''}</b><br>
                         <b>${route}</b> · ${row.면 || ''}<br>
-                        순서: ${row.순서 || '미지정'}
+                        순서: ${row.순서 || '미지정'}<br>
+                        📅 ${row.운행요일 || '-'}요일 &nbsp; ⏰ ${row.시간 || '-'}
                     `);
 
                     markerLayer.addLayer(marker);
