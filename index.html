@@ -35,6 +35,52 @@
             attribution: '&copy; OpenStreetMap'
         }).addTo(map);
 
+        // ✅ 의성군 경계 GeoJSON (Overpass API로 OSM에서 직접 가져오기)
+        const overpassUrl = "https://overpass-api.de/api/interpreter?data=" +
+            encodeURIComponent(`[out:json];relation["name"="의성군"]["admin_level"="5"];out geom;`);
+
+        fetch(overpassUrl)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.elements || data.elements.length === 0) {
+                    console.warn("⚠️ 의성군 경계 데이터 없음");
+                    return;
+                }
+
+                // OSM relation → GeoJSON Polygon 변환
+                const el = data.elements[0];
+                const outerMembers = el.members.filter(m => m.role === "outer");
+
+                // 각 outer way의 좌표를 수집
+                const rings = outerMembers.map(m =>
+                    m.geometry.map(pt => [pt.lon, pt.lat])
+                );
+
+                // 가장 긴 링을 외곽선으로 사용
+                rings.sort((a, b) => b.length - a.length);
+
+                const geojson = {
+                    type: "Feature",
+                    geometry: {
+                        type: "Polygon",
+                        coordinates: rings
+                    }
+                };
+
+                L.geoJSON(geojson, {
+                    style: {
+                        color: "#2563eb",       // 파란 테두리
+                        weight: 2.5,
+                        opacity: 0.9,
+                        fillColor: "#3b82f6",   // 파란 채우기
+                        fillOpacity: 0.08
+                    }
+                }).addTo(map);
+
+                console.log("✅ 의성군 경계 표시 완료");
+            })
+            .catch(err => console.error("❌ 경계 로드 실패:", err));
+
         // ✅ 수정 1: MarkerClusterGroup 제거 → 일반 LayerGroup 사용 (항상 점으로 표시)
         const markerLayer = L.layerGroup().addTo(map);
 
