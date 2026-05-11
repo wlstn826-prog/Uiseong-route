@@ -99,7 +99,8 @@
                         opacity: 0.9,
                         fillColor: "#3b82f6",
                         fillOpacity: 0.08
-                    }
+                    },
+                    interactive: false  // ✅ 클릭 이벤트 차단 해제 (마커 팝업 정상 작동)
                 }).addTo(map);
 
                 console.log("✅ 의성군 경계 완료 (조각 수:", segments.length, ")");
