@@ -211,7 +211,13 @@
             document.getElementById('legend-count').textContent = `${count}개 마을`;
 
             let html = '';
-            Object.keys(usedColors).sort().forEach(route => {
+            const dayOrder = { '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6, '일': 7 };
+            Object.keys(usedColors).sort((a, b) => {
+                // 노선명 앞 요일 글자 기준 정렬 (예: "월-정현" → '월')
+                const dayA = dayOrder[a[0]] || 99;
+                const dayB = dayOrder[b[0]] || 99;
+                return dayA - dayB;
+            }).forEach(route => {
                 html += `<span style="color:${usedColors[route]}; font-size:18px;">●</span> ${route}<br>`;
             });
             div.innerHTML = html;
