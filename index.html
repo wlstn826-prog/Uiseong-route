@@ -1,240 +1,163 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="utf-8">
-    <title>나의 운행 마을 대시보드</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-geometryutil@0.10.0/src/leaflet-geometryutil.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-    
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>기아 무브투유 - 지난주 리뷰</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Malgun Gothic', sans-serif; }
-        #map { height: 100vh; width: 100%; }
-        .legend { 
-            background: white; 
-            padding: 12px 15px; 
-            border-radius: 8px; 
-            box-shadow: 0 0 15px rgba(0,0,0,0.3); 
-            font-size: 13.5px; 
-            line-height: 1.8;
-            max-height: 85vh;
-            overflow-y: auto;
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap');
+        body { font-family: 'Noto Sans KR', sans-serif; background: linear-gradient(135deg, #e0f2f1 0%, #f0fdfa 100%); }
+        .brand-teal { color: #14b8a6; }
+        .brand-bg { background-color: #14b8a6; }
+        .card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .card:hover { transform: translateY(-6px); }
     </style>
 </head>
-<body>
-    <div id="map"></div>
+<body class="min-h-screen pb-20">
 
-    <script>
-        const map = L.map('map').setView([36.352, 128.697], 11);
+<div class="brand-bg text-white shadow-lg sticky top-0 z-50">
+    <div class="max-w-2xl mx-auto px-5 py-5 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 bg-white rounded-2xl flex items-center justify-center text-2xl">🚚</div>
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight">기아 무브투유</h1>
+                <p class="text-xs opacity-75 -mt-1">D-1 × 기아 × 소록우산</p>
+            </div>
+        </div>
+        <div class="text-right">
+            <p class="text-sm font-medium" id="week-title">2026. 5. 5(월) ~ 5. 11(일)</p>
+            <p class="text-xs opacity-75">지난주 리뷰</p>
+        </div>
+    </div>
+</div>
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap'
-        }).addTo(map);
+<div class="max-w-2xl mx-auto px-5 pt-6">
 
-        // ✅ way 조각들을 끝점끼리 연결해 하나의 폐곡선으로 만드는 함수
-        function stitchSegments(segs) {
-            const remaining = segs.map(s => [...s]);
-            const result = remaining.splice(0, 1)[0];
+    <!-- 메인 탭 -->
+    <div class="flex border-b border-teal-200 mb-6 bg-white rounded-3xl p-1 shadow">
+        <button onclick="switchMainTab(0)" id="tab0-btn" class="flex-1 py-4 rounded-3xl font-medium bg-white shadow">요일별 특이사항</button>
+        <button onclick="switchMainTab(1)" id="tab1-btn" class="flex-1 py-4 rounded-3xl font-medium text-gray-500">저번주 같은요일 판매</button>
+    </div>
 
-            while (remaining.length > 0) {
-                const last = result[result.length - 1];
-                let bestIdx = -1, bestReverse = false, bestDist = Infinity;
+    <!-- 요일별 특이사항 -->
+    <div id="main-tab0">
+        <div class="grid grid-cols-7 gap-2 mb-8 text-center text-sm" id="day-tabs"></div>
+        <div id="day-content"></div>
+    </div>
 
-                for (let i = 0; i < remaining.length; i++) {
-                    const seg = remaining[i];
-                    const dHead = Math.hypot(seg[0][0] - last[0], seg[0][1] - last[1]);
-                    const dTail = Math.hypot(seg[seg.length - 1][0] - last[0], seg[seg.length - 1][1] - last[1]);
-                    if (dHead < bestDist) { bestDist = dHead; bestIdx = i; bestReverse = false; }
-                    if (dTail < bestDist) { bestDist = dTail; bestIdx = i; bestReverse = true;  }
-                }
+    <!-- 판매 요약 -->
+    <div id="main-tab1" class="hidden">
+        <div id="sales-content"></div>
+    </div>
+</div>
 
-                const chosen = remaining.splice(bestIdx, 1)[0];
-                const toAdd = bestReverse ? chosen.reverse() : chosen;
-                result.push(...toAdd.slice(1)); // 첫 점은 이전 마지막과 겹치므로 제외
-            }
+<script>
+// ==================== 데이터 로드 ====================
+let notesData = {};
+let salesData = {};
 
-            // 폐곡선 닫기
-            const first = result[0], lastPt = result[result.length - 1];
-            if (first[0] !== lastPt[0] || first[1] !== lastPt[1]) {
-                result.push(first);
-            }
-            return result;
-        }
+async function loadData() {
+    try {
+        const [notesRes, salesRes] = await Promise.all([
+            fetch('data/special-notes.json'),
+            fetch('data/sales-summary.json')
+        ]);
+        notesData = await notesRes.json();
+        salesData = await salesRes.json();
+        renderDayTabs();
+        switchDay(0); // 월요일 기본
+    } catch(e) {
+        console.error("데이터 로드 실패", e);
+        alert("data 폴더 안에 JSON 파일이 있는지 확인해주세요!");
+    }
+}
 
-        // ✅ 의성군 경계 (relation ID 7817014)
-        const overpassUrl = "https://overpass-api.de/api/interpreter?data=" +
-            encodeURIComponent(`[out:json];relation(7817014);out geom;`);
+// ==================== 요일별 특이사항 렌더링 ====================
+function renderDayTabs() {
+    const container = document.getElementById('day-tabs');
+    const days = ['월','화','수','목','금','토','일'];
+    let html = '';
+    days.forEach((day, i) => {
+        html += `
+            <div onclick="switchDay(${i})" id="day${i}" 
+                 class="day-tab py-3 bg-white rounded-2xl font-medium cursor-pointer">
+                ${day}
+            </div>`;
+    });
+    container.innerHTML = html;
+}
 
-        fetch(overpassUrl)
-            .then(r => r.json())
-            .then(data => {
-                if (!data.elements || data.elements.length === 0) {
-                    console.warn("⚠️ 의성군 경계 데이터 없음");
-                    return;
-                }
+function switchDay(d) {
+    document.querySelectorAll('.day-tab').forEach(el => el.classList.remove('border-2', 'border-teal-300', 'bg-teal-50'));
+    document.getElementById(`day${d}`).classList.add('border-2', 'border-teal-300', 'bg-teal-50');
 
-                const el = data.elements[0];
-                const outerMembers = el.members.filter(m => m.role === "outer");
+    const dayKey = ['mon','tue','wed','thu','fri','sat','sun'][d];
+    const data = notesData[dayKey] || { visits: 0, notes: [] };
 
-                const segments = outerMembers.map(m =>
-                    m.geometry.map(pt => [pt.lon, pt.lat])
-                );
+    let html = `
+        <div class="mb-6 flex items-center gap-3">
+            <div class="w-10 h-10 brand-bg text-white rounded-3xl flex items-center justify-center text-xl font-bold">0${d+5}</div>
+            <div>
+                <div class="font-bold text-xl">${['월','화','수','목','금','토','일'][d]}요일 · ${data.visits}마을</div>
+            </div>
+        </div>
+        <div class="space-y-5">`;
 
-                // 끝점 체이닝으로 직선 제거 후 폐곡선 완성
-                const stitched = stitchSegments(segments);
-
-                const geojson = {
-                    type: "Feature",
-                    geometry: { type: "Polygon", coordinates: [stitched] }
-                };
-
-                L.geoJSON(geojson, {
-                    style: {
-                        color: "#2563eb",
-                        weight: 2.5,
-                        opacity: 0.9,
-                        fillColor: "#3b82f6",
-                        fillOpacity: 0.08
-                    },
-                    interactive: false  // ✅ 클릭 이벤트 차단 해제 (마커 팝업 정상 작동)
-                }).addTo(map);
-
-                console.log("✅ 의성군 경계 완료 (조각 수:", segments.length, ")");
-            })
-            .catch(err => console.error("❌ 경계 로드 실패:", err));
-
-        // 항상 점으로 표시 (클러스터 없음)
-        const markerLayer = L.layerGroup().addTo(map);
-
-        const routePoints = {};
-        const usedColors = {};
-
-        const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR0GrINy2HAmOQXlj0X_02i69TqWIBbg-SkC4jbS_bf85pTXN6jQ3Vr-G42Tqj8aDxexIpHuHvQswWB/pub?gid=746812285&single=true&output=csv";
-
-        const colorPalette = [
-            "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
-            "#e377c2","#8c564b","#17becf","#bcbd22","#7f7f7f",
-            "#aec7e8","#ffbb78","#98df8a","#ff9896","#c5b0d5"
-        ];
-
-        Papa.parse(csvUrl, {
-            download: true,
-            header: true,
-            skipEmptyLines: true,
-            complete: function(results) {
-                console.log("✅ CSV 로드 완료:", results.data.length, "행");
-
-                results.data.forEach(row => {
-                    const lat = parseFloat(row.위도);
-                    const lng = parseFloat(row.경도);
-                    if (isNaN(lat) || isNaN(lng)) return;
-
-                    const route = (row.노선 || '기타').trim();
-                    const order = parseFloat(row.순서) || 9999;
-
-                    if (!usedColors[route]) {
-                        usedColors[route] = colorPalette[Object.keys(usedColors).length % colorPalette.length];
-                    }
-                    const color = usedColors[route];
-
-                    const marker = L.circleMarker([lat, lng], {
-                        radius: 8,
-                        fillColor: color,
-                        color: "#ffffff",
-                        weight: 2.5,
-                        fillOpacity: 0.95
-                    }).bindPopup(`
-                        <b>${row.마을이름 || ''}</b><br>
-                        <b>${route}</b> · ${row.면 || ''}<br>
-                        순서: ${row.순서 || '미지정'}<br>
-                        📅 ${row.운행요일 || '-'}요일 &nbsp; ⏰ ${row.시간 || '-'}
-                    `);
-
-                    markerLayer.addLayer(marker);
-
-                    if (!routePoints[route]) routePoints[route] = [];
-                    routePoints[route].push({ lat, lng, order });
-                });
-
-                Object.keys(routePoints).forEach(route => {
-                    let points = routePoints[route];
-                    if (points.length < 2) return;
-
-                    points.sort((a, b) => a.order - b.order);
-
-                    const color = usedColors[route];
-                    const latlngs = points.map(p => [p.lat, p.lng]);
-
-                    L.polyline(latlngs, {
-                        color: color,
-                        weight: 5,
-                        opacity: 0.85
-                    }).addTo(map);
-
-                    for (let i = 0; i < latlngs.length - 1; i++) {
-                        const from = map.latLngToContainerPoint(latlngs[i]);
-                        const to   = map.latLngToContainerPoint(latlngs[i + 1]);
-
-                        const midLat = (latlngs[i][0] + latlngs[i + 1][0]) / 2;
-                        const midLng = (latlngs[i][1] + latlngs[i + 1][1]) / 2;
-
-                        const angle = Math.atan2(to.y - from.y, to.x - from.x) * 180 / Math.PI + 90;
-
-                        const arrowIcon = L.divIcon({
-                            className: '',
-                            html: `<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"
-                                        style="transform: rotate(${angle}deg); display:block;">
-                                    <polygon points="10,2 18,18 10,13 2,18"
-                                             fill="${color}" stroke="white" stroke-width="1.5" opacity="0.95"/>
-                                   </svg>`,
-                            iconSize: [20, 20],
-                            iconAnchor: [10, 10]
-                        });
-
-                        L.marker([midLat, midLng], { icon: arrowIcon, interactive: false }).addTo(map);
-                    }
-
-                    console.log(`✅ ${route} (${points.length}개 정류장) 완료`);
-                });
-
-                updateLegend(usedColors);
-            }
+    if (data.notes.length === 0) {
+        html += `<div class="text-center py-12 text-gray-400">이번 요일 특이사항이 없습니다.</div>`;
+    } else {
+        data.notes.forEach(note => {
+            const color = note.type === '특이사항' ? 'orange' : 'red';
+            html += `
+                <div class="card bg-white rounded-3xl p-6">
+                    <div class="flex justify-between">
+                        <span class="px-4 py-1.5 bg-${color}-100 text-${color}-700 text-sm font-medium rounded-2xl">${note.type}</span>
+                        <span class="text-xs text-gray-400">${note.village} · ${note.time}</span>
+                    </div>
+                    <div class="mt-4 text-[15px] leading-relaxed">${note.content}</div>
+                </div>`;
         });
+    }
+    html += `</div>`;
+    document.getElementById('day-content').innerHTML = html;
+}
 
-        function updateLegend(usedColors) {
-            const div = document.getElementById('legend-content');
-            const count = Object.values(routePoints).reduce((s, p) => s + p.length, 0);
-            document.getElementById('legend-count').textContent = `${count}개 마을`;
+// ==================== 판매 요약 ====================
+function renderSales() {
+    const html = `
+        <div class="card bg-white rounded-3xl p-8 text-center">
+            <div class="inline-flex items-center gap-2 text-teal-600 mb-2">
+                <i class="fas fa-calendar"></i>
+                <span class="font-medium">저번주 월요일</span>
+            </div>
+            <div class="text-6xl font-bold brand-teal mt-3">${salesData.mon?.total || 1248}</div>
+            <div class="text-xl text-gray-500">만원</div>
+            <div class="text-sm text-teal-600 mt-1">${salesData.mon?.villages || 7}마을 평균 ${salesData.mon?.avg || 178}만원</div>
+        </div>
 
-            let html = '';
-            const dayOrder = { '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6, '일': 7 };
-            Object.keys(usedColors).sort((a, b) => {
-                // 노선명 앞 요일 글자 기준 정렬 (예: "월-정현" → '월')
-                const dayA = dayOrder[a[0]] || 99;
-                const dayB = dayOrder[b[0]] || 99;
-                return dayA - dayB;
-            }).forEach(route => {
-                html += `<span style="color:${usedColors[route]}; font-size:18px;">●</span> ${route}<br>`;
-            });
-            div.innerHTML = html;
-        }
+        <div class="mt-8 grid grid-cols-2 gap-4">
+            ${Object.entries(salesData.mon?.categories || {}).map(([cat, val]) => `
+                <div class="card bg-white rounded-3xl p-6">
+                    <div class="text-teal-600 font-medium">${cat}</div>
+                    <div class="text-4xl font-bold mt-3">${val.amount}</div>
+                    <div class="text-sm text-gray-500">${val.percent}%</div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    document.getElementById('sales-content').innerHTML = html;
+}
 
-        const legend = L.control({ position: 'bottomright' });
-        legend.onAdd = function() {
-            const div = L.DomUtil.create('div', 'legend');
-            div.innerHTML = `
-                <b>🚛 운행 마을 <span id="legend-count">로드 중...</span></b><br><br>
-                <div id="legend-content">로드 중...</div>
-                <hr style="margin:8px 0; border-color:#eee;">
-                <small>→ 화살표 = 순서 기준 방향</small>
-            `;
-            return div;
-        };
-        legend.addTo(map);
-    </script>
+function switchMainTab(n) {
+    document.getElementById('main-tab0').classList.toggle('hidden', n !== 0);
+    document.getElementById('main-tab1').classList.toggle('hidden', n !== 1);
+    if (n === 1) renderSales();
+}
+
+// ==================== 시작 ====================
+window.onload = loadData;
+</script>
 </body>
 </html>
